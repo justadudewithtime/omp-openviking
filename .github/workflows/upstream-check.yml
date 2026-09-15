@@ -13,28 +13,35 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       SUBPATH: examples/pi-coding-agent-extension
     steps:
+      # No `submodules:` input on purpose: the gitlink is readable from the
+      # tree, so there is no need to clone 65 MB of upstream here.
       - uses: actions/checkout@v4
-      - name: Compare recorded SHA against upstream main
+      - name: Compare the pinned subpath tree against upstream main
         run: |
           set -euo pipefail
-          PINNED=$(jq -r .sha upstream/UPSTREAM.json)
-          HEAD_SHA=$(curl -sSf -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/volcengine/OpenViking/commits/main?path=$SUBPATH" | jq -r .sha)
-          if [ "$PINNED" = "$HEAD_SHA" ]; then
-            echo "up to date at $PINNED"
+          api() { curl -sSf -H "Accept: application/vnd.github+json" "$@"; }
+          REPO=https://api.github.com/repos/volcengine/OpenViking
+          PINNED=$(git rev-parse HEAD:upstream)
+          # Compare the subpath tree, not the commit: upstream main moves for
+          # changes elsewhere in the repository, which is not drift for us.
+          PIN_TREE=$(api "$REPO/git/trees/$PINNED:$SUBPATH" | jq -r .sha)
+          MAIN_TREE=$(api "$REPO/git/trees/main:$SUBPATH" | jq -r .sha)
+          if [ "$PIN_TREE" = "$MAIN_TREE" ]; then
+            echo "up to date at $PINNED (subpath tree $PIN_TREE)"
             exit 0
           fi
-          curl -sSf -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/volcengine/OpenViking/compare/$PINNED...$HEAD_SHA" \
+          HEAD_SHA=$(api "$REPO/commits/main" | jq -r .sha)
+          api "$REPO/compare/$PINNED...$HEAD_SHA" \
             | jq -r --arg p "$SUBPATH/" '.files[]? | select(.filename | startswith($p)) | "- \(.status): \(.filename)"' \
             > changed.txt
-          { echo "Vendored ref: \`$PINNED\`"; echo "Upstream main: \`$HEAD_SHA\`"; echo;
+          { echo "Pinned commit: \`$PINNED\` (subpath tree \`$PIN_TREE\`)";
+            echo "Upstream main: \`$HEAD_SHA\` (subpath tree \`$MAIN_TREE\`)"; echo;
             echo "Changed files under \`$SUBPATH\`:"; echo; cat changed.txt; echo;
-            echo "Re-vendor with \`node scripts/sync-upstream.mjs <ref>\` and resolve any patch reject."; } > body.md
+            echo "Update with \`bun run update\`, then commit the new gitlink."; } > body.md
           EXISTING=$(gh issue list --state open --label upstream-drift --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then
             gh issue edit "$EXISTING" --body-file body.md
           else
-            gh label create upstream-drift --color ededed --description "Vendored upstream subpath moved" 2>/dev/null || true
+            gh label create upstream-drift --color ededed --description "Pinned upstream subpath moved" 2>/dev/null || true
             gh issue create --title "Upstream subpath moved past $PINNED" --label upstream-drift --body-file body.md
           fi
