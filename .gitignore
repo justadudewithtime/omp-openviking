@@ -1,5 +1,11 @@
 node_modules/
 .tmp/
+# OpenViking server runtime store. The server inherits the omp process cwd, so
+# a session started from this repository writes its memory store, session
+# transcripts, queue/audit databases and pid file here. Never commit it: it
+# holds real user memories and host-absolute paths.
+data/
+*.pid
 *.log
 *.jsonl
 test/.scratch/

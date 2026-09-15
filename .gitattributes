@@ -1,4 +1,4 @@
-# The vendored tree must round-trip byte for byte, and the patches in
-# patches/ are byte-exact unified diffs. Disable all end-of-line conversion so
-# a clone on Windows (core.autocrlf=true) still matches the upstream tarball.
+# The patches in patches/ are byte-exact unified diffs against the upstream
+# submodule checkout. Disable all end-of-line conversion so a clone on Windows
+# (core.autocrlf=true) still applies them unchanged.
 * -text
