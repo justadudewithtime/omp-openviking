@@ -1,0 +1,40 @@
+name: upstream-check
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SUBPATH: examples/pi-coding-agent-extension
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare recorded SHA against upstream main
+        run: |
+          set -euo pipefail
+          PINNED=$(jq -r .sha upstream/UPSTREAM.json)
+          HEAD_SHA=$(curl -sSf -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/volcengine/OpenViking/commits/main?path=$SUBPATH" | jq -r .sha)
+          if [ "$PINNED" = "$HEAD_SHA" ]; then
+            echo "up to date at $PINNED"
+            exit 0
+          fi
+          curl -sSf -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/volcengine/OpenViking/compare/$PINNED...$HEAD_SHA" \
+            | jq -r --arg p "$SUBPATH/" '.files[]? | select(.filename | startswith($p)) | "- \(.status): \(.filename)"' \
+            > changed.txt
+          { echo "Vendored ref: \`$PINNED\`"; echo "Upstream main: \`$HEAD_SHA\`"; echo;
+            echo "Changed files under \`$SUBPATH\`:"; echo; cat changed.txt; echo;
+            echo "Re-vendor with \`node scripts/sync-upstream.mjs <ref>\` and resolve any patch reject."; } > body.md
+          EXISTING=$(gh issue list --state open --label upstream-drift --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --body-file body.md
+          else
+            gh label create upstream-drift --color ededed --description "Vendored upstream subpath moved" 2>/dev/null || true
+            gh issue create --title "Upstream subpath moved past $PINNED" --label upstream-drift --body-file body.md
+          fi
