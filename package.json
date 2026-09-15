@@ -12,6 +12,7 @@
     "setup": "node scripts/setup.mjs",
     "update": "node scripts/update-upstream.mjs",
     "test": "node --test \"upstream/examples/pi-coding-agent-extension/tests/*.test.mjs\"",
+    "lifecycle": "node test/lifecycle.mjs",
     "smoke": "node test/smoke.mjs",
     "stub": "node test/stub-server.mjs"
   },

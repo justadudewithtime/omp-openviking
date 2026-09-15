@@ -193,7 +193,7 @@ export function startStubServer({
     const method = req.method || 'GET';
 
     if (method === 'GET' && pathname === '/health') {
-      return sendJson(res, { status: 'ok' });
+      return sendJson(res, { status: 'ok', version: 'stub' });
     }
     if (method === 'GET' && pathname === '/api/v1/system/status') {
       return sendJson(res, statusResponse());

@@ -31,17 +31,29 @@ memory:
 An active OMP backend would inject its own memory block next to OpenViking's and extract every
 turn twice.
 
-You need a running `openviking-server` (see getting started). `OPENVIKING_URL` overrides the
-default `http://127.0.0.1:1933`. Everything else is tuned in
-`upstream/examples/pi-coding-agent-extension/config.json`, documented upstream. Editing that file
-dirties the submodule, so `bun run update` will ask you to copy it aside first (or pass `--force`,
-which backs it up for you).
+## Server
+
+The extension starts `openviking-server` when nothing answers on the endpoint, and stops it again
+when the last OMP process using it exits. Concurrent sessions share one server: whoever gets there
+first starts it, everyone else adopts it. A server you started yourself is adopted and never
+stopped, and neither is anything the extension cannot prove it started.
+
+`OPENVIKING_NO_AUTOSTART=1` only ever adopts, `OPENVIKING_NO_AUTOSTOP=1` leaves the server running
+after the last session, and `OPENVIKING_AUTOSTART_TIMEOUT_MS` (default 60000) bounds how long a
+start is given to answer.
+
+`OPENVIKING_URL` overrides the default endpoint `http://127.0.0.1:1933`. Everything else is tuned
+in `upstream/examples/pi-coding-agent-extension/config.json`, documented upstream. Editing that
+file dirties the submodule, so `bun run update` will ask you to copy it aside first (or pass
+`--force`, which backs it up for you).
 
 ## What differs from upstream
 
-One change: `adapters/tool-registration.ts` registers the tools when the extension loads, because
-OMP builds the turn's tool set before upstream's `session_start` hook resolves. Until the server
-answers, a tool call reports the server as unreachable instead of the tool being missing.
+Two changes. `adapters/tool-registration.ts` registers the tools when the extension loads, because
+OMP builds the turn's tool set before upstream's `session_start` hook resolves; until the server
+answers, a tool call reports it as unreachable instead of the tool being missing.
+`adapters/server-lifecycle.ts` adds the shared server lifecycle described above, which upstream
+leaves to you.
 
 Host limitations, not bugs: extensions cannot own `/memory` subcommands or the `memory://`
 protocol, and subagents do not share the parent's recall scope. `/viking` output and a real
