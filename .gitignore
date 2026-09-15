@@ -1,0 +1,8 @@
+node_modules/
+.tmp/
+*.log
+*.jsonl
+test/.scratch/
+test/.artifacts/
+bun.lock
+bun.lockb

@@ -1,0 +1,21 @@
+{
+  "name": "omp-openviking",
+  "version": "0.4.20-omp.1",
+  "description": "OpenViking context memory for oh-my-pi: a thin, patch-based port of the upstream pi extension.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": false,
+  "omp": {
+    "extensions": ["index.ts"]
+  },
+  "scripts": {
+    "sync": "node scripts/sync-upstream.mjs",
+    "smoke": "node test/smoke.mjs",
+    "stub": "node test/stub-server.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/justadudewithtime/omp-openviking.git"
+  },
+  "files": ["index.ts", "adapters", "upstream", "patches", "scripts", "LICENSE", "NOTICE"]
+}
