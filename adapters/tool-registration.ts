@@ -1,29 +1,38 @@
 /**
- * Factory-time tool registration adapter for oh-my-pi.
+ * Factory-time tool registration for oh-my-pi.
  *
  * Upstream registers its viking_* tools inside start(), which runs after an
- * async health check in a fire-and-forget session_start handler. oh-my-pi has
+ * async health check in a fire-and-forget session_start handler. OMP has
  * already assembled the turn's tool set by then, so none of the tools are
- * offered to the model on the turn that triggered startup.
+ * offered to the model on the turn that starts the session.
  *
- * This adapter registers the same upstream tool set synchronously, at
- * extension-factory time, and wraps every execute with a connectivity guard.
- * Registration therefore no longer depends on the health check completing;
- * only the tool's behavior does. Once connected the wrapper is transparent and
- * upstream's execute runs unchanged.
+ * This adapter registers upstream's own descriptors synchronously, at
+ * extension-factory time, and delegates each execute to the descriptor
+ * upstream registers later with its real client and sync manager. Until that
+ * happens, a call reports the server as unreachable instead of the tool being
+ * absent. Nothing under upstream/ is modified, so the submodule stays pristine.
  */
-import { registerTools } from "../upstream/tools.js";
-import type { OVClient } from "../upstream/client.js";
-import type { SyncManager } from "../upstream/sync.js";
+import { fileURLToPath } from "node:url";
+
+import type { OVClient } from "../upstream/examples/pi-coding-agent-extension/client.js";
+import { loadConfig } from "../upstream/examples/pi-coding-agent-extension/config.js";
+import type { SyncManager } from "../upstream/examples/pi-coding-agent-extension/sync.js";
+import { registerTools } from "../upstream/examples/pi-coding-agent-extension/tools.js";
+
+const EXTENSION_DIR = fileURLToPath(
+  new URL("../upstream/examples/pi-coding-agent-extension/", import.meta.url),
+);
+
+const VIKING_PREFIX = "viking_";
 
 /** Upstream tool executes take (toolCallId, params, signal, onUpdate, ctx). */
 type ToolExecute = (...args: unknown[]) => Promise<unknown>;
 
 /** Only the fields this adapter touches are named; the rest pass through. */
-type ToolDescriptor = Record<string, unknown> & { execute: ToolExecute };
+export type ToolDescriptor = Record<string, unknown> & { name: string; execute: ToolExecute };
 
 /** The single host member upstream's registerTools() needs. */
-interface ToolHost {
+export interface ToolHost {
   registerTool(descriptor: ToolDescriptor): unknown;
 }
 
@@ -44,39 +53,62 @@ function unreachable(endpoint: string) {
 }
 
 /**
- * Register upstream's tools now, guarded by `isConnected`.
- *
- * @param pi           the host ExtensionAPI
- * @param client       upstream OpenViking client (owns cfg.endpoint)
- * @param sync         upstream sync manager, passed through untouched
- * @param isConnected  read at call time, never at registration time
+ * Register the viking_* tools now, and return the host to hand to upstream's
+ * factory. The returned proxy captures upstream's later registrations instead
+ * of forwarding them, because the names are already registered here.
  */
-export function registerToolsEagerly(
-  pi: ToolHost,
-  client: OVClient,
-  sync: SyncManager | undefined,
-  isConnected: () => boolean,
-): void {
-  // Proxy the host so upstream's registerTools() sees a normal ExtensionAPI and
-  // every other member keeps working, while registerTool is intercepted.
-  const host = new Proxy(pi, {
+export function installVikingTools(pi: ToolHost): ToolHost {
+  const config = loadConfig(EXTENSION_DIR);
+  // Upstream's factory returns immediately when disabled; register nothing.
+  if (!config.enabled) return pi;
+
+  /** Upstream's real descriptors, keyed by tool name, once it registers them. */
+  const live = new Map<string, ToolDescriptor>();
+
+  const harvested: ToolDescriptor[] = [];
+  try {
+    registerTools(
+      { registerTool: (descriptor: ToolDescriptor) => harvested.push(descriptor) },
+      {} as unknown as OVClient,
+      {} as unknown as SyncManager,
+    );
+  } catch (error) {
+    // Fail soft and loud: hand back the unwrapped host so upstream registers
+    // its tools the way it always did (late, so they appear from the second
+    // turn on) rather than the extension failing to load outright. The smoke
+    // test still fails, which is how a maintainer finds out.
+    console.error(
+      "omp-openviking: could not harvest upstream tool descriptors, falling back to " +
+        "upstream's own late registration: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+    return pi;
+  }
+
+  for (const descriptor of harvested) {
+    pi.registerTool({
+      ...descriptor,
+      async execute(...args: unknown[]) {
+        const real = live.get(descriptor.name);
+        if (!real) return unreachable(config.endpoint);
+        return real.execute.apply(real, args);
+      },
+    });
+  }
+
+  return new Proxy(pi, {
     get(target, property, receiver) {
       if (property === "registerTool") {
         return (descriptor: ToolDescriptor) => {
-          const upstreamExecute = descriptor.execute;
-          return target.registerTool({
-            ...descriptor,
-            async execute(...args: unknown[]) {
-              if (!isConnected()) return unreachable(client.cfg.endpoint);
-              return upstreamExecute.apply(descriptor, args);
-            },
-          });
+          if (typeof descriptor?.name === "string" && descriptor.name.startsWith(VIKING_PREFIX)) {
+            live.set(descriptor.name, descriptor);
+            return undefined;
+          }
+          return target.registerTool(descriptor);
         };
       }
       const value = Reflect.get(target, property, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
-
-  registerTools(host, client, sync);
 }

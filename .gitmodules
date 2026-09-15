@@ -1,0 +1,5 @@
+[submodule "upstream"]
+	path = upstream
+	url = https://github.com/volcengine/OpenViking.git
+	shallow = true
+	ignore = dirty

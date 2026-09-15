@@ -3,23 +3,26 @@ Copyright 2026 the omp-openviking contributors
 
 This product includes software developed by the OpenViking project.
 
-The contents of the `upstream/` directory are vendored verbatim from:
+The `upstream/` directory is a git submodule reference to:
 
   Project:  volcengine/OpenViking
   Source:   https://github.com/volcengine/OpenViking
   Subpath:  examples/pi-coding-agent-extension
-  Ref:      v0.4.20
-  Commit:   b54001e2e5c974ffd7a09ba543813fa104a99561
+
+No upstream file is copied into this repository. The pinned commit is recorded as the
+submodule gitlink; read it with `git submodule status upstream`.
 
 That subpath is covered by `examples/LICENSE` in the upstream repository, which is the
 Apache License, Version 2.0. A copy of that license is shipped here as `LICENSE`.
 
 The upstream repository root carries a different license (AGPLv3) for code outside
 `examples/`. No file from outside `examples/pi-coding-agent-extension` is copied into or
-imported by this repository, so nothing here is AGPL licensed.
+imported by this repository, so nothing here is AGPL licensed. Note that a recursive clone
+places the entire upstream repository, AGPL licensed directories included, on your disk;
+this repository distributes none of it.
 
-Local modifications to the vendored tree are not hand edits: they are the unified diffs in
-`patches/`, applied by `scripts/sync-upstream.mjs`. Files added by this repository
+The upstream checkout is never hand edited. Local modifications, if any, are the unified
+diffs in `patches/`, applied by `scripts/lib/upstream.mjs`. Files added by this repository
 (`index.ts`, `adapters/`, `patches/`, `scripts/`, `test/`, docs, and CI configuration) are
 original work of the omp-openviking contributors and are released under the same
 Apache License, Version 2.0.

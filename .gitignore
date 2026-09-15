@@ -4,5 +4,6 @@ node_modules/
 *.jsonl
 test/.scratch/
 test/.artifacts/
+config.json.bak
 bun.lock
 bun.lockb
