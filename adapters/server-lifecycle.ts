@@ -24,7 +24,8 @@
  * tool-registration.ts.
  *
  * Escape hatches: OPENVIKING_NO_AUTOSTART=1, OPENVIKING_NO_AUTOSTOP=1,
- * OPENVIKING_AUTOSTART_TIMEOUT_MS (default 60000).
+ * OPENVIKING_AUTOSTART_TIMEOUT_MS (default 30000; a healthy local server
+ * answers in well under 10 s, and this delay is paid at extension load).
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -85,7 +86,7 @@ export interface LifecycleOverrides {
   endpoint?: string;
   /** Spawn command as argv; default ["openviking-server"]. */
   serverCmd?: string[];
-  /** Spawn/readiness budget in ms; default 60000 or OPENVIKING_AUTOSTART_TIMEOUT_MS. */
+  /** Spawn/readiness budget in ms; default 30000 or OPENVIKING_AUTOSTART_TIMEOUT_MS. */
   timeoutMs?: number;
   autostart?: boolean;
   autostop?: boolean;
@@ -187,7 +188,7 @@ async function ensureServerInner(overrides: LifecycleOverrides): Promise<EnsureR
     overrides.autostart ?? process.env.OPENVIKING_NO_AUTOSTART !== "1";
   const timeoutMs =
     overrides.timeoutMs ??
-    Number(process.env.OPENVIKING_AUTOSTART_TIMEOUT_MS ?? 60_000);
+    Number(process.env.OPENVIKING_AUTOSTART_TIMEOUT_MS ?? 30_000);
   const serverCmd = overrides.serverCmd ?? ["openviking-server"];
 
   const dir = lifecycleStateDir(endpoint);

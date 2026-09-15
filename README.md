@@ -39,8 +39,9 @@ first starts it, everyone else adopts it. A server you started yourself is adopt
 stopped, and neither is anything the extension cannot prove it started.
 
 `OPENVIKING_NO_AUTOSTART=1` only ever adopts, `OPENVIKING_NO_AUTOSTOP=1` leaves the server running
-after the last session, and `OPENVIKING_AUTOSTART_TIMEOUT_MS` (default 60000) bounds how long a
-start is given to answer.
+after the last session, and `OPENVIKING_AUTOSTART_TIMEOUT_MS` (default 30000) bounds how long a
+start is given to answer. A local server answers in under ten seconds; that wait is paid once, by
+whichever session finds the server down, and concurrent sessions wait on the same start.
 
 `OPENVIKING_URL` overrides the default endpoint `http://127.0.0.1:1933`. Everything else is tuned
 in `upstream/examples/pi-coding-agent-extension/config.json`, documented upstream. Editing that
