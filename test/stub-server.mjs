@@ -9,6 +9,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const DEFAULT_LOG = path.join(REPO_ROOT, 'test', '.artifacts', 'requests.jsonl');
@@ -133,6 +134,184 @@ function contextResponse() {
   };
 }
 
+
+// --------------------------------------------------------------------- MCP
+// Streamable HTTP (spec revision 2025-06-18), hand-rolled over node:http.
+// Only the MCP *client* package is installed (see package.json), not a
+// server SDK, so this is a minimal from-scratch implementation of just
+// enough of the transport for @modelcontextprotocol/client's
+// StreamableHTTPClientTransport to complete a handshake and drive tool
+// calls. It is intentionally stateless: every initialize mints a fresh
+// mcp-session-id and no session table is kept, so nothing here can reject a
+// session id the real client sends back to us.
+
+const MCP_PROTOCOL_VERSION = '2025-06-18';
+
+const MCP_TOOLS = [
+  {
+    name: 'search',
+    description: 'Search OpenViking memory (stub).',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'read',
+    description: 'Read an OpenViking resource by URI (stub).',
+    inputSchema: {
+      type: 'object',
+      properties: { uri: { type: 'string' } },
+      required: ['uri'],
+    },
+  },
+  {
+    name: 'browse',
+    description: 'Browse an OpenViking URI tree (stub).',
+    inputSchema: {
+      type: 'object',
+      properties: { uri: { type: 'string' } },
+      required: ['uri'],
+    },
+  },
+  {
+    name: 'remember',
+    description: 'Store a memory entry (stub).',
+    inputSchema: {
+      type: 'object',
+      properties: { content: { type: 'string' }, tags: { type: 'string' } },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'forget',
+    description: 'Remove a memory entry by URI (stub).',
+    inputSchema: {
+      type: 'object',
+      properties: { uri: { type: 'string' } },
+      required: ['uri'],
+    },
+  },
+  {
+    name: 'add_resource',
+    description: 'Attach a resource to OpenViking (stub).',
+    inputSchema: {
+      type: 'object',
+      properties: { uri: { type: 'string' }, title: { type: 'string' } },
+      required: ['uri'],
+    },
+  },
+  {
+    name: 'archive_expand',
+    description: 'Expand an archived overview entry (stub).',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+];
+
+// search mirrors searchResponse().rendered so a model quoting a tool result
+// back sees the same canary shape whether it went through REST or MCP.
+function mcpToolResultText(name, args, canary) {
+  if (name === 'search') {
+    const query = args && typeof args.query === 'string' ? args.query : '';
+    return `Search results (stub):\n\n1. ${canary} memory match\n` + (query ? `(query: ${query})\n` : '');
+  }
+  return `${name}: ok (stub)`;
+}
+
+function sendMcpJson(res, status, obj, extraHeaders = {}) {
+  const payload = JSON.stringify(obj);
+  res.writeHead(status, { 'content-type': 'application/json', ...extraHeaders });
+  res.end(payload);
+}
+
+// GET /mcp -> 405. StreamableHTTPClientTransport opens this standalone
+// stream right after sending notifications/initialized; on a 405 it just
+// ends that attempt (onRequestStreamEnd) without surfacing an error, so a
+// plain 405 is the least code that still keeps the real client happy —
+// no second, mostly idle SSE stream to maintain.
+function handleMcpGet(req, res) {
+  res.writeHead(405, { 'content-type': 'application/json', allow: 'POST, DELETE' });
+  res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Method Not Allowed' } }));
+}
+
+// DELETE /mcp -> 200. Stateless stub: every teardown succeeds, there is
+// nothing to invalidate.
+function handleMcpDelete(req, res) {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end('{}');
+}
+
+function handleMcpPost(req, res, body, canary) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return sendMcpJson(res, 400, {
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32700, message: 'Parse error: expected a JSON-RPC object' },
+    });
+  }
+
+  const isNotification = !('id' in body);
+  const { method, params, id } = body;
+
+  if (isNotification) {
+    // e.g. notifications/initialized: no reply body, 202 per spec.
+    res.writeHead(202);
+    return res.end();
+  }
+
+  if (method === 'initialize') {
+    const sessionId = randomUUID();
+    return sendMcpJson(
+      res,
+      200,
+      {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: { tools: {} },
+          serverInfo: { name: 'openviking-stub', version: '0.0.0' },
+        },
+      },
+      { 'mcp-session-id': sessionId },
+    );
+  }
+
+  if (method === 'tools/list') {
+    return sendMcpJson(res, 200, { jsonrpc: '2.0', id, result: { tools: MCP_TOOLS } });
+  }
+
+  if (method === 'tools/call') {
+    const name = params && typeof params.name === 'string' ? params.name : '';
+    const known = MCP_TOOLS.some((tool) => tool.name === name);
+    if (!known) {
+      return sendMcpJson(res, 200, {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32602, message: `Unknown tool: ${name}` },
+      });
+    }
+    const args = params && typeof params.arguments === 'object' && params.arguments ? params.arguments : {};
+    const text = mcpToolResultText(name, args, canary);
+    return sendMcpJson(res, 200, {
+      jsonrpc: '2.0',
+      id,
+      result: { content: [{ type: 'text', text }], isError: false },
+    });
+  }
+
+  return sendMcpJson(res, 200, {
+    jsonrpc: '2.0',
+    id,
+    error: { code: -32601, message: `Method not found: ${method}` },
+  });
+}
+
 export function startStubServer({
   port = Number(process.env.STUB_PORT) || 1933,
   logPath = process.env.STUB_LOG || DEFAULT_LOG,
@@ -191,6 +370,13 @@ export function startStubServer({
   function route(req, res, url, query, body, canary) {
     const { pathname } = url;
     const method = req.method || 'GET';
+
+    if (pathname === '/mcp') {
+      if (method === 'GET') return handleMcpGet(req, res);
+      if (method === 'DELETE') return handleMcpDelete(req, res);
+      if (method === 'POST') return handleMcpPost(req, res, body, canary);
+      return sendJson(res, {});
+    }
 
     if (method === 'GET' && pathname === '/health') {
       return sendJson(res, { status: 'ok', version: 'stub' });

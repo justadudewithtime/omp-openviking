@@ -1,0 +1,22 @@
+diff --git a/examples/pi-coding-agent-extension/tests/handshake-once.test.mjs b/examples/pi-coding-agent-extension/tests/handshake-once.test.mjs
+index 60a6fd6..91f4b38 100644
+--- a/examples/pi-coding-agent-extension/tests/handshake-once.test.mjs
++++ b/examples/pi-coding-agent-extension/tests/handshake-once.test.mjs
+@@ -145,7 +145,7 @@ async function withExtension(t, fn) {
+   // Dynamic, so the resolve hook above is already installed. The module is
+   // evaluated once per process; each call to its default export builds a fresh
+   // extension instance with its own bridge and its own session state.
+-  const mod = await import(join(EXTENSION_DIR, "index.ts"));
++  const mod = await import(EXTENSION_URL + "index.ts");
+   assert.equal(typeof mod.default, "function");
+ 
+   const { pi, handlers, tools } = fakePi();
+@@ -251,7 +251,7 @@ for (const plugin of [{ mcpEnabled: false }, { bypassSession: true }]) {
+       // The instance loads configuration at construction, so reload it first.
+       await shutdown();
+       await writeFile(configPath, JSON.stringify({ plugin: { pi: plugin } }));
+-      const { default: extension } = await import(join(EXTENSION_DIR, "index.ts"));
++      const { default: extension } = await import(EXTENSION_URL + "index.ts");
+       const { pi, handlers } = fakePi();
+       await extension(pi);
+       await handlers.get("before_agent_start")({ prompt: "hello", systemPrompt: "BASE" }, fakeCtx());

@@ -8,7 +8,7 @@ data/
 *.pid
 *.log
 *.jsonl
-test/.scratch/
+test/.scratch*/
 test/.artifacts/
 config.json.bak
 bun.lock

@@ -4,27 +4,28 @@
  *   node scripts/update-upstream.mjs [<ref>] [--force] [--no-smoke]
  *
  * <ref> is any branch, tag or commit in volcengine/OpenViking (default: main).
- * --force discards local edits inside the submodule checkout, backing up
- * config.json first. --no-smoke skips the smoke test, which makes real model
- * calls. Nothing is staged or committed; the printed commands do that.
+ * --force discards local edits inside the submodule checkout. --no-smoke skips
+ * the smoke test, which makes real model calls. Nothing is staged or committed;
+ * the printed commands do that.
  */
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
   EXT_SUBPATH,
   SUBMODULE_DIR,
   applyPatchesOrReport,
+  ensureDependenciesOrReport,
   ensureSubmodule,
   git,
   pinnedSha,
   repoRoot,
+  revertAppliedPatches,
   shortSha,
   submoduleDirtyPaths,
+  syncSharedOrReport,
 } from "./lib/upstream.mjs";
-
-const CONFIG_SUBPATH = `${EXT_SUBPATH}/config.json`;
 
 const argv = process.argv.slice(2);
 const force = argv.includes("--force");
@@ -57,25 +58,22 @@ function run(label, command, args) {
 if (!ensureSubmodule()) process.exit(1);
 const before = pinnedSha();
 
-// 1. Refuse to discard local work in the submodule checkout.
+// 1. Refuse to discard local work in the submodule checkout. The patch set is
+// reversed first, because its own dirt is not local work and is re-applied
+// against the new commit a few steps down.
+revertAppliedPatches();
 const dirty = submoduleDirtyPaths();
 if (dirty.length > 0) {
   if (!force) {
     die(
       `upstream checkout has local changes:\n` +
         dirty.map((path) => `  ${path}`).join("\n") +
-        `\n\nA checkout would discard them. Either:\n` +
-        `  1. copy ${CONFIG_SUBPATH} aside, run ` +
-        `\`git -C upstream checkout -- .\`, re-run this script, then re-apply\n` +
-        `     your edits; or\n` +
-        `  2. re-run with --force, which backs up config.json to ` +
-        `config.json.bak and discards the rest.`,
+        `\n\nA checkout would discard them. Either copy them aside and run ` +
+        `\`git -C upstream checkout -- .\`, or re-run with --force, which ` +
+        `discards them for you.\n\nSettings do not live there any more: upstream ` +
+        `reads them from the environment, .openviking/config.json in the ` +
+        `workspace, and ovcli.conf.`,
     );
-  }
-  if (dirty.includes(CONFIG_SUBPATH)) {
-    const backup = join(repoRoot, "config.json.bak");
-    copyFileSync(join(SUBMODULE_DIR, ...CONFIG_SUBPATH.split("/")), backup);
-    console.log(`--force: backed up your config.json to ${backup}`);
   }
   const reset = git(["checkout", "--", "."], { cwd: SUBMODULE_DIR });
   if (reset.status !== 0) die(`could not reset the upstream checkout:\n${reset.stderr}`);
@@ -105,7 +103,13 @@ const checkout = git(["checkout", "--detach", after], { cwd: SUBMODULE_DIR });
 if (checkout.status !== 0) die(`could not check out ${after}:\n${checkout.stderr}`);
 console.log(`upstream now at ${shortSha(after)} (was ${shortSha(before)})`);
 
-// 4. Patches. A rejection stops here, with the new commit left on disk.
+// 4. The two things a fresh checkout is missing: the npm packages upstream
+// imports by bare specifier, and its generated `shared/` directory.
+console.log(`\n== dependencies and generated modules`);
+if (!ensureDependenciesOrReport()) process.exit(1);
+if (!syncSharedOrReport()) process.exit(1);
+
+// 5. Patches. A rejection stops here, with the new commit left on disk.
 console.log(`\n== applying patches`);
 if (!applyPatchesOrReport()) {
   console.error(
@@ -116,7 +120,7 @@ if (!applyPatchesOrReport()) {
   process.exit(1);
 }
 
-// 5. Upstream's own unit tests.
+// 6. Upstream's own unit tests.
 const unitStatus = run("upstream unit tests", process.execPath, [
   "--test",
   `upstream/${EXT_SUBPATH}/tests/*.test.mjs`,
@@ -125,7 +129,15 @@ if (unitStatus !== 0) {
   die(`\nupstream unit tests failed (exit ${unitStatus}) at ${shortSha(after)}.`);
 }
 
-// 6. This fork's port contract, unless skipped.
+// 7. This fork's port contract against the stub: model-free, seconds, and the
+// first thing an upstream refactor of the tool surface breaks.
+const registrationStatus = run("registration test", process.execPath, ["test/registration.mjs"]);
+if (registrationStatus !== 0) {
+  die(`\nregistration test failed (exit ${registrationStatus}) at ${shortSha(after)}.`);
+}
+
+// 8. The same contract through a real OMP process and a real model, unless
+// skipped.
 if (skipSmoke) {
   console.log(`\n== smoke test skipped (--no-smoke)`);
 } else if (!existsSync(join(repoRoot, "test", "smoke.mjs"))) {

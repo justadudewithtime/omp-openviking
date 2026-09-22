@@ -16,19 +16,26 @@ that tree that cannot live outside it belongs here as a unified diff.
   script exits non-zero, and `bun run update` does not run the test suites. It never applies a
   partial patch set silently.
 - **Prefer a root-level adapter to a patch.** A change that can be expressed as a module under
-  `adapters/` should be. A patch leaves the submodule working tree permanently dirty, which makes
-  `bun run update` refuse to check out a new commit until the tree is reset, and it has to be
-  rebased by hand every time upstream moves the lines it touches.
+  `adapters/` should be. A patch has to be rebased by hand every time upstream moves the lines it
+  touches, and it leaves the submodule working tree dirty. `bun run update` reverses the patch set
+  before it looks for local changes, so that dirt alone never blocks a bump, but a patch that no
+  longer reverses cleanly is a silent no-op in that step and a loud failure in the next one.
 
 ## The patch set
 
-Empty, deliberately.
+One patch, and it touches a test rather than the extension.
 
-The one behavior oh-my-pi needs changed is tool registration timing, and
-`adapters/tool-registration.ts` does it from outside: it harvests upstream's own tool descriptors,
-registers them synchronously at extension-factory time, and delegates each `execute` to the
-descriptor upstream registers later. Upstream is not modified, so the submodule stays pristine and
-`bun run update` is a clean fetch plus checkout.
+- `0001-windows-import-file-url.patch`, created against `184a5cec`. Upstream's
+  `tests/handshake-once.test.mjs` loads the extension with `await import(join(EXTENSION_DIR,
+  "index.ts"))`. Node's ESM loader rejects a Windows absolute path (`Received protocol 'c:'`), so
+  all six of that file's tests fail here and `bun run update` refuses the bump. The patch switches
+  both call sites to the `EXTENSION_URL` `file://` prefix the same file already computes. It is a
+  host-portability fix, so it stays until upstream makes the same change.
+
+The behavior oh-my-pi needs changed, tool registration timing, is still done from outside by
+`adapters/tool-registration.ts`: it performs the MCP handshake at extension-factory time and
+registers the catalogue through upstream's own `registerMcpTools()`. The extension itself is not
+modified.
 
 ## How to add a patch
 
@@ -82,6 +89,14 @@ exists for any of them:
   silently on hosts that do not provide it.
 - Tool registration timing, as of the move to `adapters/tool-registration.ts`. It was
   `0001-register-tools-at-factory-time.patch` while `upstream/` was vendored.
+- The second MCP connection. Once the adapter has registered the catalogue, upstream's own bridge
+  is redundant: it connects, lists, registers into a host that drops the duplicates, and serves no
+  call. Forcing `mcpEnabled: false` on upstream would save that handshake, at the price of
+  `/viking` reporting a disabled tool surface that is in fact serving every call. A local
+  handshake is milliseconds; the honest status line is worth more.
+- `<ext>/shared/`, which upstream generates instead of committing. `scripts/lib/upstream.mjs` runs
+  upstream's own generator (`examples/memory-plugin-shared/sync.mjs`) and restores the committed
+  copies it refreshes for other harnesses, so the submodule ends clean.
 
 ## History
 
@@ -89,3 +104,5 @@ exists for any of them:
   (`b54001e2e5c974ffd7a09ba543813fa104a99561`), retired when `upstream/` became a submodule. Its
   effect moved into `adapters/tool-registration.ts` unchanged; upstream never needed the edit, the
   vendored layout just made a patch the convenient way to call the adapter.
+- The `0001-` prefix was free again when the Windows import fix was written, so it was reused. A
+  patch number is an ordering, not an identity.

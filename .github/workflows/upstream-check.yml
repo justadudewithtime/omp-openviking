@@ -11,32 +11,47 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      SUBPATH: examples/pi-coding-agent-extension
+      # Both halves of what this fork actually runs. The extension imports
+      # `shared/`, which is a generated copy of memory-plugin-shared/lib, so a
+      # change there ships to us without touching the extension directory.
+      SUBPATHS: examples/pi-coding-agent-extension examples/memory-plugin-shared/lib
     steps:
       # No `submodules:` input on purpose: the gitlink is readable from the
       # tree, so there is no need to clone 65 MB of upstream here.
       - uses: actions/checkout@v4
-      - name: Compare the pinned subpath tree against upstream main
+      - name: Compare the pinned subpath trees against upstream main
         run: |
           set -euo pipefail
           api() { curl -sSf -H "Accept: application/vnd.github+json" "$@"; }
           REPO=https://api.github.com/repos/volcengine/OpenViking
           PINNED=$(git rev-parse HEAD:upstream)
-          # Compare the subpath tree, not the commit: upstream main moves for
+          # Compare the subpath trees, not the commit: upstream main moves for
           # changes elsewhere in the repository, which is not drift for us.
-          PIN_TREE=$(api "$REPO/git/trees/$PINNED:$SUBPATH" | jq -r .sha)
-          MAIN_TREE=$(api "$REPO/git/trees/main:$SUBPATH" | jq -r .sha)
-          if [ "$PIN_TREE" = "$MAIN_TREE" ]; then
-            echo "up to date at $PINNED (subpath tree $PIN_TREE)"
+          DRIFTED=""
+          SUMMARY=""
+          for SUBPATH in $SUBPATHS; do
+            PIN_TREE=$(api "$REPO/git/trees/$PINNED:$SUBPATH" | jq -r .sha)
+            MAIN_TREE=$(api "$REPO/git/trees/main:$SUBPATH" | jq -r .sha)
+            SUMMARY="$SUMMARY- \`$SUBPATH\`: pinned tree \`$PIN_TREE\`, main tree \`$MAIN_TREE\`"$'\n'
+            if [ "$PIN_TREE" != "$MAIN_TREE" ]; then
+              DRIFTED="$DRIFTED$SUBPATH "
+            fi
+          done
+          if [ -z "$DRIFTED" ]; then
+            echo "up to date at $PINNED"
             exit 0
           fi
           HEAD_SHA=$(api "$REPO/commits/main" | jq -r .sha)
-          api "$REPO/compare/$PINNED...$HEAD_SHA" \
-            | jq -r --arg p "$SUBPATH/" '.files[]? | select(.filename | startswith($p)) | "- \(.status): \(.filename)"' \
-            > changed.txt
-          { echo "Pinned commit: \`$PINNED\` (subpath tree \`$PIN_TREE\`)";
-            echo "Upstream main: \`$HEAD_SHA\` (subpath tree \`$MAIN_TREE\`)"; echo;
-            echo "Changed files under \`$SUBPATH\`:"; echo; cat changed.txt; echo;
+          api "$REPO/compare/$PINNED...$HEAD_SHA" > compare.json
+          : > changed.txt
+          for SUBPATH in $DRIFTED; do
+            jq -r --arg p "$SUBPATH/" '.files[]? | select(.filename | startswith($p)) | "- \(.status): \(.filename)"' \
+              compare.json >> changed.txt
+          done
+          { echo "Pinned commit: \`$PINNED\`";
+            echo "Upstream main: \`$HEAD_SHA\`"; echo;
+            echo "$SUMMARY";
+            echo "Changed files under the drifted subpaths:"; echo; cat changed.txt; echo;
             echo "Update with \`bun run update\`, then commit the new gitlink."; } > body.md
           EXISTING=$(gh issue list --state open --label upstream-drift --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then

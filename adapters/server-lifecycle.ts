@@ -43,35 +43,32 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const EXTENSION_DIR = fileURLToPath(
-  new URL("../upstream/examples/pi-coding-agent-extension/", import.meta.url),
-);
+import { buildPluginConfig } from "../upstream/examples/pi-coding-agent-extension/shared/plugin-config.mjs";
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:1933";
 
 /**
- * The two fields lifecycle needs from the extension's config.json, without
- * importing upstream's config.ts (its `./x.js` -> `x.ts` specifiers only
- * resolve inside the omp loader, and this module must also load under plain
- * Node for the test harness). Env precedence mirrors upstream:
- * OPENVIKING_URL, then OPENVIKING_BASE_URL, then the file, then the default.
+ * The two fields lifecycle needs, resolved the way upstream resolves them:
+ * environment, then the workspace's `.openviking/config.json`, then
+ * `ovcli.conf`, then the schema defaults. The shared loader is imported rather
+ * than upstream's config.ts because this module must also load under plain
+ * Node for the test harness, and config.ts uses `./x.js` specifiers that only
+ * resolve inside the omp loader. The shared file is plain .mjs.
  */
 function readLifecycleConfig(): { enabled: boolean; endpoint: string } {
-  let file: { enabled?: boolean; endpoint?: string } = {};
+  let config: { enabled?: boolean; endpoint?: string } = {};
   try {
-    file = JSON.parse(readFileSync(join(EXTENSION_DIR, "config.json"), "utf8")) as typeof file;
+    // No `deriveEffectivePeer`: the git-derived peer costs a subprocess and
+    // nothing here needs an identity.
+    config = buildPluginConfig("pi", { cwd: process.cwd() }) as typeof config;
   } catch {
-    // Missing or malformed config.json: upstream defaults apply.
+    // A malformed workspace file must not stop the server from starting; the
+    // extension itself reports the configuration error.
   }
   return {
-    enabled: file.enabled ?? true,
-    endpoint:
-      process.env.OPENVIKING_URL ??
-      process.env.OPENVIKING_BASE_URL ??
-      file.endpoint ??
-      DEFAULT_ENDPOINT,
+    enabled: config.enabled ?? true,
+    endpoint: String(config.endpoint || "").trim() || DEFAULT_ENDPOINT,
   };
 }
 

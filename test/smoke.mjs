@@ -5,8 +5,8 @@
  * Starts the stub OpenViking API, runs OMP headless against this repository
  * three times, and asserts the three things the port has to deliver:
  *
- *   1. tool-registration : the viking_* tools exist on the turn that starts the
- *                          session, so a tool call reaches the server
+ *   1. tool-registration : the openviking_* MCP tools exist on the turn that starts
+ *                          the session, so a tool call reaches the /mcp endpoint
  *   2. recall-injection  : the <openviking-context> block really reaches the
  *                          model (it can quote a canary back)
  *   3. capture-fidelity  : turn capture posts assistant tool parts, including
@@ -204,7 +204,10 @@ freshDir(scratchDir);
 freshDir(sessionDir);
 rmSync(debugLogPath, { force: true });
 
-const stub = await startStubServer({ logPath, canary });
+// Port 0, not the stub's default 1933: a developer running a real
+// OpenViking server must still be able to run the smoke test, and the child
+// OMP process is pointed at whatever port this gets through OPENVIKING_URL.
+const stub = await startStubServer({ port: 0, logPath, canary });
 const stubUrl = stub.url;
 
 process.stdout.write(`stub on ${stubUrl}, canary ${canary}, log ${logPath}\n`);
@@ -212,32 +215,36 @@ process.stdout.write(`repo ${repoRoot}, scratch cwd ${scratchDir}\n\n`);
 
 try {
   // --- check 1: tool registration -----------------------------------------
-  // Upstream registers tools inside an async session_start chain, which OMP
-  // misses. If the port works, viking_search is callable on the first turn and
-  // reaches POST /api/v1/search/find.
+  // Upstream now exposes its memory surface over MCP: the extension opens a
+  // Streamable-HTTP MCP client against <OPENVIKING_URL>/mcp, lists tools, and
+  // registers each as openviking_<toolname> in pi. That registration happens
+  // at factory time (synchronously, before any async session_start chain
+  // runs), which is exactly what makes openviking_search callable on the
+  // very first turn: nothing has to await a background connect first. A
+  // tool-driven call reaches the stub as a JSON-RPC tools/call on POST /mcp,
+  // distinct from the automatic recall request the context hook issues
+  // separately over REST.
   {
     const offset = readLog().length;
     const run = await runOmp(
-      "Call the viking_search tool with the query \"project conventions\", then report its output " +
+      "Call the openviking_search tool with the query \"project conventions\", then report its output " +
         "verbatim. Use no other tool.",
     );
     const requests = logSince(offset);
-    // The automatic recall request is the one the context hook issues with
-    // mode "context". /find is only ever reached from the viking_search tool,
-    // and a tool-driven /search has no mode "context".
-    const toolDriven = requests.filter((r) => {
-      if (r.method !== "POST") return false;
-      if (r.path.includes("/api/v1/search/find")) return true;
-      if (r.path.includes("/api/v1/search/search")) return r.body?.mode !== "context";
-      return false;
-    });
+    const toolDriven = requests.filter(
+      (r) =>
+        r.method === "POST" &&
+        r.path === "/mcp" &&
+        r.body?.method === "tools/call" &&
+        r.body?.params?.name === "search",
+    );
     report(
       "tool-registration",
       toolDriven.length > 0,
       [describeRun("run", run), describeRequests("requests during run", requests)].join("\n"),
     );
     if (toolDriven.length) {
-      process.stdout.write(`     tool-driven request: POST ${toolDriven[0].path}\n`);
+      process.stdout.write(`     tool-driven request: POST ${toolDriven[0].path} tools/call -> search\n`);
     }
   }
 
