@@ -1,0 +1,34 @@
+diff --git a/examples/pi-coding-agent-extension/index.ts b/examples/pi-coding-agent-extension/index.ts
+index 280f6fc..e6b45bf 100644
+--- a/examples/pi-coding-agent-extension/index.ts
++++ b/examples/pi-coding-agent-extension/index.ts
+@@ -188,6 +188,29 @@ export default async function (pi: ExtensionAPI) {
+         archiveOverview = await fetchArchiveOverview(client, sync.sessionId, config);
+       }
+ 
++      // A session the server has never seen whose branch already holds entries
++      // inherited them (fork, subagent context, or a long session that predates
++      // this extension). Its parent already captured that history; uploading it
++      // again makes the first commit extract thousands of messages. Start the
++      // watermark at the newest user turn so only the current exchange is sent.
++      if (sync.sessionId && sync.syncedCount === 0 && branch.length > 0) {
++        const existing = await client.getSession(sync.sessionId);
++        if (!existing || (!existing.message_count && !existing.commit_count)) {
++          let start = branch.length;
++          for (let i = branch.length - 1; i >= 0; i--) {
++            const entry = branch[i];
++            if (entry?.type === "message" && entry.message?.role === "user") {
++              start = i;
++              break;
++            }
++          }
++          if (start > 0) {
++            sync.restoreWatermark(start);
++            logger.log("inherited_history_skipped", { session: sync.sessionId, skipped: start });
++          }
++        }
++      }
++
+       // Join the handshake and publish whatever the server listed (also needed
+       // for pi -c continuations, which never fire session_start).
+       if (handshake) adoptBridgeTools(ctx, await handshake);

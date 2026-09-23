@@ -23,7 +23,7 @@ that tree that cannot live outside it belongs here as a unified diff.
 
 ## The patch set
 
-Two patches: one touches a test, one changes when the extension commits.
+Three patches: one touches a test, two change what the extension commits.
 
 - `0001-windows-import-file-url.patch`, created against `184a5cec`. Upstream's
   `tests/handshake-once.test.mjs` loads the extension with `await import(join(EXTENSION_DIR,
@@ -80,6 +80,16 @@ change:
   commit once its server-side `pending_tokens` reach `commitTokenThreshold` (20k). It must be a
   patch rather than an adapter: it has to run after upstream's final flush, with upstream's
   client, headers and retry queue.
+
+- `0003-skip-inherited-history.patch`, created against `184a5cec`. A session the server has
+  never seen can start with a branch that already holds entries: a fork, a subagent given its
+  parent's context, or a long session opened before the extension was installed. Upstream's
+  watermark starts at 0, so the first `turn_end` uploads that whole inherited history and the
+  first commit extracts it again (measured on 2026-09-23: two archives of 1,928 and 2,081
+  duplicated messages cost 41% of the day's extraction input and yielded 4 memories). On startup,
+  when the server reports no messages and no commits for the session, the patch moves the
+  watermark to the newest real user entry, so only the current exchange is sent. It must be a
+  patch: the watermark lives in upstream's `SyncManager`, set inside the startup chain.
 
 ## Deliberately not patched
 
