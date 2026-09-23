@@ -228,10 +228,13 @@ export function ensureDependenciesOrReport() {
 
 /**
  * Apply every patches/*.patch into the submodule working tree, in
- * lexicographic filename order. Returns [{ name, ok, detail }].
+ * lexicographic filename order. Patches already applied by an earlier run are
+ * reversed first, so re-running setup re-applies the set instead of failing.
+ * Returns [{ name, ok, detail }].
  */
 export function applyPatches() {
   if (!existsSync(PATCHES_DIR)) return [];
+  revertAppliedPatches();
   const names = readdirSync(PATCHES_DIR)
     .filter((name) => name.endsWith(".patch"))
     .sort();
