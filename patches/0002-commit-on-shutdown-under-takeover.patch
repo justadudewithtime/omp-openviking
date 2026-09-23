@@ -1,0 +1,20 @@
+diff --git a/examples/pi-coding-agent-extension/index.ts b/examples/pi-coding-agent-extension/index.ts
+index 95b3055..4bdb273 100644
+--- a/examples/pi-coding-agent-extension/index.ts
++++ b/examples/pi-coding-agent-extension/index.ts
+@@ -389,6 +389,15 @@ export default async function (pi: ExtensionAPI) {
+     await sync.shutdown();
+     if (config.takeoverEnabled) {
+       await takeover.shutdown();
++      // Takeover commits only under token pressure with more than
++      // takeoverKeepRecentTurns user turns, so one-shot sessions (subagents)
++      // never commit. Commit at exit once the server-side backlog passes the
++      // plain threshold, so their messages still reach memory extraction.
++      try {
++        await sync.commitIfNeeded();
++      } catch (error) {
++        logger.logError("session_shutdown", error);
++      }
+     } else {
+       await sync.commit();
+     }

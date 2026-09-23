@@ -23,7 +23,7 @@ that tree that cannot live outside it belongs here as a unified diff.
 
 ## The patch set
 
-One patch, and it touches a test rather than the extension.
+Two patches: one touches a test, one changes when the extension commits.
 
 - `0001-windows-import-file-url.patch`, created against `184a5cec`. Upstream's
   `tests/handshake-once.test.mjs` loads the extension with `await import(join(EXTENSION_DIR,
@@ -70,6 +70,16 @@ change:
 3. Delete the adapter module it called if nothing else imports it.
 4. Record the upstream ref that made it unnecessary in the History section below.
 5. Re-run `bun run update` and the smoke test.
+
+- `0002-commit-on-shutdown-under-takeover.patch`, created against `184a5cec`. With
+  `takeoverEnabled` (the default) upstream never commits at `session_shutdown`, and takeover itself
+  commits only at 30k pending tokens with more than `takeoverKeepRecentTurns` user turns. One-shot
+  sessions, which every OMP subagent is, therefore never commit and their messages never reach
+  memory or experience extraction (measured: 545 of 622 sessions uncommitted). The patch calls
+  upstream's own `sync.commitIfNeeded()` after `takeover.shutdown()`, so a session exits with a
+  commit once its server-side `pending_tokens` reach `commitTokenThreshold` (20k). It must be a
+  patch rather than an adapter: it has to run after upstream's final flush, with upstream's
+  client, headers and retry queue.
 
 ## Deliberately not patched
 
